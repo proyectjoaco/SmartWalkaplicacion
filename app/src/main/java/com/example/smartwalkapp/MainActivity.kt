@@ -15,6 +15,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.rememberNavController
 import com.example.smartwalkapp.ui.explore.ExploreViewModel
 import com.example.smartwalkapp.ui.home.HomeViewModel
+import com.example.smartwalkapp.ui.transport.TransportViewModel
 import com.example.smartwalkapp.ui.navigation.NavGraph
 import com.example.smartwalkapp.ui.theme.SmartWalkappTheme
 
@@ -39,6 +40,7 @@ class MainActivity : ComponentActivity() {
                     val navController = rememberNavController()
                     val homeViewModel: HomeViewModel = viewModel()
                     val exploreViewModel: ExploreViewModel = viewModel()
+                    val transportViewModel: TransportViewModel = viewModel()
 
                     val permissionLauncher = rememberLauncherForActivityResult(
                         ActivityResultContracts.RequestMultiplePermissions()
@@ -71,6 +73,7 @@ class MainActivity : ComponentActivity() {
                             data?.get(0)?.let { query ->
                                 val lowerQuery = query.lowercase()
                                 if (lowerQuery.contains("colectivo") || lowerQuery.contains("bus") || lowerQuery.contains("línea") || lowerQuery.contains("linea")) {
+                                    transportViewModel.processVoiceCommand(query)
                                     navController.navigate("transport")
                                 } else {
                                     exploreViewModel.onVoiceInputReceived(query)
@@ -84,6 +87,7 @@ class MainActivity : ComponentActivity() {
                         navController = navController,
                         homeViewModel = homeViewModel,
                         exploreViewModel = exploreViewModel,
+                        transportViewModel = transportViewModel,
                         onVoiceSearchClick = {
                             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)

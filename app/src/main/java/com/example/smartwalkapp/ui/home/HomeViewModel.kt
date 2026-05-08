@@ -21,9 +21,17 @@ class HomeViewModel(application: Application) : AndroidViewModel(application), T
     private val _address = MutableStateFlow("Detecting location...")
     val address: StateFlow<String> = _address
 
+    private val _isLoading = MutableStateFlow(true)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
     init {
         tts = TextToSpeech(application, this)
         startLocationUpdates()
+        // Simulamos un tiempo de carga mínimo para que la animación se vea
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(2500)
+            _isLoading.value = false
+        }
     }
 
     @SuppressLint("MissingPermission")

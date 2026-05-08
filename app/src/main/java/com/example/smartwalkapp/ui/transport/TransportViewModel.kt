@@ -1,6 +1,7 @@
 package com.example.smartwalkapp.ui.transport
 
 import android.app.Application
+import android.content.Intent
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -8,9 +9,6 @@ import androidx.lifecycle.viewModelScope
 import com.example.smartwalkapp.data.api.RetrofitClient
 import com.example.smartwalkapp.data.api.SapemStop
 import com.example.smartwalkapp.data.api.BusArrival
-import com.example.smartwalkapp.data.model.Place
-import com.example.smartwalkapp.data.model.Geometry
-import com.example.smartwalkapp.data.model.Location as MyLocation
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,48 +31,29 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         tts = TextToSpeech(application, this)
-        loadStopsFromCsv()
+        loadInitialData()
     }
 
-    private fun loadStopsFromCsv() {
+    private fun loadInitialData() {
         viewModelScope.launch {
             _uiState.value = TransportUiState.Loading
             try {
-                val lines = busRouteRepository.getLinesFromCsv()
-                val stopsFromCsv = mutableListOf<SapemStop>()
-                
-                // Procesamos las primeras 3 líneas para no exceder límites de API rápidamente
-                for (lineName in lines.take(3)) {
-                    val description = busRouteRepository.getRouteDescription(lineName) ?: ""
-                    val intersections = busRouteRepository.extractIntersections(description)
-                    
-                    for ((index, corner) in intersections.withIndex()) {
-                        val address = "$corner, Bahía Blanca, Argentina"
-                        try {
-                            val geocodeResponse = RetrofitClient.googleMapsService.geocodeAddress(address, GOOGLE_API_KEY)
-                            if (geocodeResponse.status == "OK" && geocodeResponse.results.isNotEmpty()) {
-                                val loc = geocodeResponse.results[0].geometry.location
-                                stopsFromCsv.add(
-                                    SapemStop(
-                                        id = "csv_${lineName}_$index",
-                                        nombre = "$lineName: $corner",
-                                        lat = loc.lat,
-                                        lng = loc.lng,
-                                        lineas = listOf(lineName)
-                                    )
-                                )
-                            }
-                        } catch (e: Exception) {
-                            Log.e("TransportVM", "Error geocoding $address", e)
-                        }
-                    }
+                // 1. Intentar obtener ubicación (con timeout implícito)
+                val currentLocation = try {
+                    fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
+                } catch (e: Exception) {
+                    Log.e("TransportVM", "Location failed", e)
+                    null
                 }
 
-                if (stopsFromCsv.isNotEmpty()) {
-                    val currentLocation = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
-                    
-                    val filteredStops = if (currentLocation != null) {
-                        stopsFromCsv.sortedBy { stop ->
+                // 2. Cargar paradas locales inmediatamente (CSV + Fallback)
+                val allStops = busRouteRepository.getAllStopsFromCsv()
+                Log.d("TransportVM", "Loaded ${allStops.size} stops from repository")
+
+                if (allStops.isNotEmpty()) {
+                    // 3. Filtrar y ordenar por cercanía si tenemos ubicación
+                    val processedStops = if (currentLocation != null) {
+                        allStops.sortedBy { stop ->
                             val results = FloatArray(1)
                             android.location.Location.distanceBetween(
                                 currentLocation.latitude, currentLocation.longitude,
@@ -82,24 +61,37 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                                 results
                             )
                             results[0]
-                        }.take(10) // Mostramos las 10 más cercanas
+                        }.take(20)
                     } else {
-                        stopsFromCsv.take(10)
+                        allStops.take(20)
                     }
 
-                    _uiState.value = TransportUiState.Success(filteredStops)
-                    if (filteredStops.isNotEmpty()) {
-                        speak("He encontrado ${filteredStops.size} paradas cercanas a tu ubicación.")
-                    } else {
-                        speak("No hay paradas en el archivo que coincidan con tu zona actual.")
+                    _uiState.value = TransportUiState.Success(processedStops)
+                    speak("He cargado las paradas de colectivo más cercanas.")
+                    
+                    // 4. Intentar refrescar con API en segundo plano para obtener datos reales de SAPEM
+                    if (currentLocation != null) {
+                        refreshStopsInBackground(currentLocation.latitude, currentLocation.longitude)
                     }
                 } else {
+                    // Si el repo devuelve vacío (raro), intentar API online
                     refreshStops()
                 }
             } catch (e: Exception) {
-                Log.e("TransportVM", "Error loading CSV", e)
-                refreshStops()
+                Log.e("TransportVM", "Error loading data", e)
+                _uiState.value = TransportUiState.Error("Error al cargar transporte: ${e.message}")
             }
+        }
+    }
+
+    private suspend fun refreshStopsInBackground(lat: Double, lng: Double) {
+        try {
+            val sapemStops = RetrofitClient.sapemService.getNearbyStops(lat, lng)
+            if (sapemStops.isNotEmpty()) {
+                _uiState.value = TransportUiState.Success(sapemStops)
+            }
+        } catch (e: Exception) {
+            Log.e("TransportVM", "Background refresh failed", e)
         }
     }
 
@@ -123,51 +115,67 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                 val location = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
                 if (location != null) {
                     try {
-                        // Intento 1: SAPEM API (con User-Agent corregido)
                         val stops = RetrofitClient.sapemService.getNearbyStops(location.latitude, location.longitude)
-                        _uiState.value = TransportUiState.Success(stops)
-                        speak("He encontrado ${stops.size} paradas de SAPEM cerca.")
-                    } catch (e: Exception) {
-                        Log.e("TransportVM", "SAPEM failed, falling back to Google", e)
-                        // Intento 2: Backup con Google Places
-                        val locationStr = "${location.latitude},${location.longitude}"
-                        val response = RetrofitClient.googleMapsService.getNearbyPlaces(
-                            location = locationStr,
-                            radius = 1000,
-                            type = "bus_station",
-                            apiKey = GOOGLE_API_KEY
-                        )
-                        
-                        val googleStops = response.results.map { place ->
-                            SapemStop(
-                                id = "google_${place.name}",
-                                nombre = place.name,
-                                lat = place.geometry.location.lat,
-                                lng = place.geometry.location.lng,
-                                lineas = listOf("Información no disponible")
-                            )
-                        }
-                        
-                        _uiState.value = TransportUiState.Success(googleStops)
-                        if (googleStops.isNotEmpty()) {
-                            speak("La API de SAPEM no responde, pero he encontrado ${googleStops.size} paradas cercanas en el mapa.")
+                        if (stops.isNotEmpty()) {
+                            _uiState.value = TransportUiState.Success(stops)
+                            speak("He actualizado las paradas de SAPEM.")
                         } else {
-                            speak("No he encontrado paradas cerca.")
+                            fallbackToGooglePlaces(location.latitude, location.longitude)
                         }
+                    } catch (e: Exception) {
+                        fallbackToGooglePlaces(location.latitude, location.longitude)
                     }
                 } else {
-                    _uiState.value = TransportUiState.Error("No se pudo obtener tu ubicación")
+                    // Si no hay ubicación, volvemos a las locales del CSV
+                    loadInitialData()
                 }
             } catch (e: Exception) {
-                _uiState.value = TransportUiState.Error("Error general de conexión")
+                _uiState.value = TransportUiState.Error("No se pudo conectar con el servicio")
             }
+        }
+    }
+
+    private suspend fun fallbackToGooglePlaces(lat: Double, lng: Double) {
+        try {
+            val response = RetrofitClient.googleMapsService.getNearbyPlaces(
+                location = "$lat,$lng",
+                radius = 1500,
+                type = "bus_station",
+                apiKey = GOOGLE_API_KEY
+            )
+            
+            val googleStops = response.results.map { place ->
+                SapemStop(
+                    id = "google_${place.name}",
+                    nombre = place.name,
+                    lat = place.geometry.location.lat,
+                    lng = place.geometry.location.lng,
+                    lineas = listOf("Google Maps")
+                )
+            }
+            
+            if (googleStops.isNotEmpty()) {
+                _uiState.value = TransportUiState.Success(googleStops)
+                speak("He encontrado paradas cercanas usando el mapa.")
+            } else {
+                // Si incluso Google falla, usamos las locales como último recurso
+                val local = busRouteRepository.getAllStopsFromCsv().take(10)
+                _uiState.value = TransportUiState.Success(local)
+                speak("Mostrando paradas de referencia locales.")
+            }
+        } catch (e: Exception) {
+            _uiState.value = TransportUiState.Error("Error al buscar paradas cercanas")
         }
     }
 
     fun fetchArrivals(stop: SapemStop) {
         viewModelScope.launch {
-            if (stop.id.startsWith("google_")) {
-                speak("Lo siento, no tengo tiempos en tiempo real para esta parada de Google. Pero está ubicada en ${stop.nombre}")
+            val isReference = stop.id.startsWith("e") || 
+                              stop.id.startsWith("csv_") || 
+                              stop.id.startsWith("google_")
+            
+            if (isReference) {
+                speak("No tengo tiempos en tiempo real para esta parada de referencia, pero puedo guiarte hasta ella.")
                 return@launch
             }
             
@@ -175,14 +183,92 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                 val arrivals = RetrofitClient.sapemService.getArrivals(stop.id)
                 if (arrivals.isNotEmpty()) {
                     val info = arrivals.joinToString(". ") { 
-                        "Línea ${it.linea} llega en ${it.tiempoArribo} minutos" 
+                        "Línea ${it.linea} en ${it.tiempoArribo} minutos" 
                     }
                     speak("En la parada ${stop.nombre}. $info")
                 } else {
-                    speak("No hay arribos próximos para la parada ${stop.nombre}")
+                    speak("No hay arribos próximos.")
                 }
             } catch (e: Exception) {
-                speak("No pude conectar con el servicio de tiempos de llegada de SAPEM.")
+                speak("Servicio de arribos no disponible por ahora.")
+            }
+        }
+    }
+
+    fun startNavigationToStop(stop: SapemStop) {
+        viewModelScope.launch {
+            val isReference = stop.id.startsWith("e") || 
+                              stop.id.startsWith("csv_") || 
+                              stop.id.startsWith("google_")
+            val typeText = if (isReference) "parada de referencia" else "parada exacta"
+            
+            speak("Iniciando guía hacia la $typeText en ${stop.nombre}. Sigue mis instrucciones.")
+            
+            val intent = Intent(getApplication<Application>(), com.example.smartwalkapp.services.NavigationService::class.java).apply {
+                putExtra("destination_name", stop.nombre)
+                putExtra("destination_lat", stop.lat)
+                putExtra("destination_lng", stop.lng)
+            }
+            
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                getApplication<Application>().startForegroundService(intent)
+            } else {
+                getApplication<Application>().startService(intent)
+            }
+        }
+    }
+
+    fun processVoiceCommand(query: String) {
+        viewModelScope.launch {
+            val lowerQuery = query.lowercase()
+            // Extraer el número de línea (ej: "512")
+            val lineMatch = Regex("\\d+").find(lowerQuery)
+            val lineNumber = lineMatch?.value ?: ""
+
+            if (lineNumber.isEmpty()) {
+                speak("¿Qué línea de colectivo buscas?")
+                return@launch
+            }
+
+            // 1. Obtener ubicación actual
+            val currentLocation = try {
+                fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
+            } catch (e: Exception) {
+                null
+            }
+
+            // 2. Buscar en paradas actuales o locales
+            val currentStops = (uiState.value as? TransportUiState.Success)?.stops ?: emptyList()
+            val localStops = busRouteRepository.getAllStopsFromCsv()
+            val allAvailableStops = (currentStops + localStops).distinctBy { it.id }
+
+            // 3. Filtrar paradas que tengan esa línea
+            val lineStops = allAvailableStops.filter { stop -> 
+                stop.lineas.any { it.contains(lineNumber) } 
+            }
+
+            if (lineStops.isEmpty()) {
+                speak("No encontré paradas para la línea $lineNumber en mi base de datos.")
+                return@launch
+            }
+
+            // 4. Encontrar la más cercana
+            val nearestStop = if (currentLocation != null) {
+                lineStops.minByOrNull { stop ->
+                    val results = FloatArray(1)
+                    android.location.Location.distanceBetween(
+                        currentLocation.latitude, currentLocation.longitude,
+                        stop.lat, stop.lng,
+                        results
+                    )
+                    results[0]
+                }
+            } else {
+                lineStops.firstOrNull()
+            }
+
+            nearestStop?.let { stop ->
+                startNavigationToStop(stop)
             }
         }
     }

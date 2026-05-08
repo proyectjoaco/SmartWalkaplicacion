@@ -102,7 +102,12 @@ fun TransportScreen(
                         }
 
                         items(state.stops) { stop ->
-                            SapemStopCard(stop) {
+                            val isReference = stop.id.startsWith("e") || 
+                                              stop.id.startsWith("csv_") || 
+                                              stop.id.startsWith("google_")
+                            SapemStopCard(stop, isReference) {
+                                // Al tocar la card, preguntamos si quiere ir ahí o ver arribos
+                                viewModel.startNavigationToStop(stop)
                                 viewModel.fetchArrivals(stop)
                             }
                         }
@@ -148,14 +153,17 @@ fun VoiceGuideButton(onClick: () -> Unit) {
 }
 
 @Composable
-fun SapemStopCard(stop: SapemStop, onClick: () -> Unit) {
+fun SapemStopCard(stop: SapemStop, isOffline: Boolean = false, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        colors = CardDefaults.cardColors(
+            containerColor = if (isOffline) Color(0xFFF0F4F8) else Color.White
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        border = if (isOffline) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFD1D9E6)) else null
     ) {
         Row(
             modifier = Modifier
@@ -164,22 +172,40 @@ fun SapemStopCard(stop: SapemStop, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    stop.nombre,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Black
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stop.nombre,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Black,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isOffline) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = Color.LightGray.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                "REF",
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.DarkGray
+                            )
+                        }
+                    }
+                }
                 Text(
                     "Líneas: ${stop.lineas.joinToString(", ")}",
                     fontSize = 14.sp,
-                    color = Color.Gray
+                    color = if (isOffline) Color.DarkGray else Color.Gray
                 )
             }
             Icon(
-                Icons.Default.DirectionsBus,
+                if (isOffline) Icons.Default.LocationOn else Icons.Default.DirectionsBus,
                 contentDescription = null,
-                tint = ElectricBlue,
+                tint = if (isOffline) Color.Gray else ElectricBlue,
                 modifier = Modifier.size(32.dp)
             )
         }

@@ -18,6 +18,7 @@ fun NavGraph(
     navController: NavHostController,
     homeViewModel: HomeViewModel,
     exploreViewModel: ExploreViewModel,
+    transportViewModel: com.example.smartwalkapp.ui.transport.TransportViewModel,
     onVoiceSearchClick: () -> Unit = {}
 ) {
     var showVoiceAssistant by remember { mutableStateOf(false) }
@@ -27,9 +28,8 @@ fun NavGraph(
         startDestination = "home"
     ) {
         composable("home") {
-            val address by homeViewModel.address.collectAsState()
             HomeScreen(
-                currentAddress = address,
+                viewModel = homeViewModel,
                 onNavigateClick = { navController.navigate("transport") },
                 onGoogleMapsClick = { navController.navigate("explore") },
                 onVoiceAssistantClick = onVoiceSearchClick,
@@ -42,7 +42,9 @@ fun NavGraph(
                                 onVoiceSearchClick()
                             } else if (route != "home") {
                                 navController.navigate(route) {
-                                    popUpTo("home") { saveState = true }
+                                    popUpTo(navController.graph.startDestinationId) {
+                                        saveState = true
+                                    }
                                     launchSingleTop = true
                                     restoreState = true
                                 }
@@ -61,10 +63,12 @@ fun NavGraph(
                         currentRoute = "explore",
                         onNavigate = { route ->
                             if (route == "voice") {
-                                showVoiceAssistant = true
+                                onVoiceSearchClick()
                             } else if (route != "explore") {
                                 navController.navigate(route) {
-                                    popUpTo("home") { saveState = true }
+                                    popUpTo(navController.graph.startDestinationId) {
+                                        saveState = true
+                                    }
                                     launchSingleTop = true
                                     restoreState = true
                                 }
@@ -89,7 +93,9 @@ fun NavGraph(
                                 onVoiceSearchClick()
                             } else if (route != "transport") {
                                 navController.navigate(route) {
-                                    popUpTo("home") { saveState = true }
+                                    popUpTo(navController.graph.startDestinationId) {
+                                        saveState = true
+                                    }
                                     launchSingleTop = true
                                     restoreState = true
                                 }
