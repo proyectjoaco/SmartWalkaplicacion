@@ -9,6 +9,7 @@ import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 object RetrofitClient {
     private const val SAPEM_BASE_URL = "https://gpsbahia.com.ar/api/"
     private const val GOOGLE_MAPS_BASE_URL = "https://maps.googleapis.com/"
+    private const val GPS_BAHIA_BASE_URL = "https://www.gpsbahia.com.ar/"
 
     private val moshi = Moshi.Builder()
         .add(KotlinJsonAdapterFactory())
