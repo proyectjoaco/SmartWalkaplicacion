@@ -33,11 +33,24 @@ object RetrofitClient {
             .create(SapemService::class.java)
     }
 
-    val googleMapsService: GoogleMapsService by lazy {
-        Retrofit.Builder()
-            .baseUrl(GOOGLE_MAPS_BASE_URL)
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
-            .build()
-            .create(GoogleMapsService::class.java)
-    }
+   val googleMapsService: GoogleMapsService by lazy {
+    Retrofit.Builder()
+        .baseUrl(GOOGLE_MAPS_BASE_URL)
+        .addConverterFactory(
+            MoshiConverterFactory.create(moshi)
+        )
+        .build()
+        .create(GoogleMapsService::class.java)
+}
+
+val gpsBahiaService: GPSBahiaService by lazy {
+    Retrofit.Builder()
+        .baseUrl(GPS_BAHIA_BASE_URL)
+        .client(okHttpClient)
+        .addConverterFactory(
+            MoshiConverterFactory.create(moshi)
+        )
+        .build()
+        .create(GPSBahiaService::class.java)
+}
 }
