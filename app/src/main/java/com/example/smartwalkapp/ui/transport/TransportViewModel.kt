@@ -35,54 +35,96 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun loadInitialData() {
-        viewModelScope.launch {
-            _uiState.value = TransportUiState.Loading
+    viewModelScope.launch {
+        _uiState.value = TransportUiState.Loading
+
+        try {
+
+            // PRUEBA GPS BAHIA
             try {
-                // 1. Intentar obtener ubicación (con timeout implícito)
-                val currentLocation = try {
-                    fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
-                } catch (e: Exception) {
-                    Log.e("TransportVM", "Location failed", e)
-                    null
+
+                val buses =
+                    RetrofitClient.gpsBahiaService
+                        .getBusLocations()
+
+                Log.d(
+                    "GPS_BAHIA",
+                    "Cantidad de colectivos: ${buses.data.size}"
+                )
+
+                buses.data.take(5).forEach { bus ->
+                    Log.d(
+                        "GPS_BAHIA",
+                        "${bus.interno} - ${bus.lat}, ${bus.lng}"
+                    )
                 }
 
-                // 2. Cargar paradas locales inmediatamente (CSV + Fallback)
-                val allStops = busRouteRepository.getAllStopsFromCsv()
-                Log.d("TransportVM", "Loaded ${allStops.size} stops from repository")
-
-                if (allStops.isNotEmpty()) {
-                    // 3. Filtrar y ordenar por cercanía si tenemos ubicación
-                    val processedStops = if (currentLocation != null) {
-                        allStops.sortedBy { stop ->
-                            val results = FloatArray(1)
-                            android.location.Location.distanceBetween(
-                                currentLocation.latitude, currentLocation.longitude,
-                                stop.lat, stop.lng,
-                                results
-                            )
-                            results[0]
-                        }.take(20)
-                    } else {
-                        allStops.take(20)
-                    }
-
-                    _uiState.value = TransportUiState.Success(processedStops)
-                    speak("He cargado las paradas de colectivo más cercanas.")
-                    
-                    // 4. Intentar refrescar con API en segundo plano para obtener datos reales de SAPEM
-                    if (currentLocation != null) {
-                        refreshStopsInBackground(currentLocation.latitude, currentLocation.longitude)
-                    }
-                } else {
-                    // Si el repo devuelve vacío (raro), intentar API online
-                    refreshStops()
-                }
             } catch (e: Exception) {
-                Log.e("TransportVM", "Error loading data", e)
-                _uiState.value = TransportUiState.Error("Error al cargar transporte: ${e.message}")
+
+                Log.e(
+                    "GPS_BAHIA",
+                    "Error GPSBahia",
+                    e
+                )
             }
+
+            // TU CÓDIGO ORIGINAL
+
+            val currentLocation = try {
+                fusedLocationClient.getCurrentLocation(
+                    Priority.PRIORITY_HIGH_ACCURACY,
+                    null
+                ).await()
+            } catch (e: Exception) {
+                Log.e("TransportVM", "Location failed", e)
+                null
+            }
+
+            val allStops =
+                busRouteRepository.getAllStopsFromCsv()
+
+            Log.d(
+                "TransportVM",
+                "Loaded ${allStops.size} stops from repository"
+            )
+
+            // aquí sigue TODO tu código original
+            if (allStops.isNotEmpty()) {
+
+    val processedStops = if (currentLocation != null) {
+        allStops.sortedBy { stop ->
+            val results = FloatArray(1)
+            android.location.Location.distanceBetween(
+                currentLocation.latitude,
+                currentLocation.longitude,
+                stop.lat,
+                stop.lng,
+                results
+            )
+            results[0]
+        }.take(20)
+    } else {
+        allStops.take(20)
+    }
+
+    _uiState.value = TransportUiState.Success(processedStops)
+
+    speak("He cargado las paradas de colectivo más cercanas.")
+
+    if (currentLocation != null) {
+        refreshStopsInBackground(
+            currentLocation.latitude,
+            currentLocation.longitude
+        )
+    }
+
+} else {
+
+    refreshStops()
+}
         }
     }
+}
 
     private suspend fun refreshStopsInBackground(lat: Double, lng: Double) {
         try {
