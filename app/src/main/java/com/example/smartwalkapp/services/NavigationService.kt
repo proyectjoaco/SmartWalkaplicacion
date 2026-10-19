@@ -1,5 +1,7 @@
 package com.example.smartwalkapp.services
 
+import com.example.smartwalkapp.BuildConfig
+
 import android.app.*
 import android.content.Context
 import android.content.Intent
@@ -33,7 +35,7 @@ class NavigationService : Service(), TextToSpeech.OnInitListener {
     private var destinationLat: Double = 0.0
     private var destinationLng: Double = 0.0
     private var hasAnnouncedArrival = false
-    private val GOOGLE_API_KEY = "AIzaSyBNxTN1HpmuINzIQT9q8EEHTfVg1kphJeg"
+    private val GOOGLE_API_KEY = BuildConfig.GOOGLE_API_KEY
 
     override fun onCreate() {
         super.onCreate()

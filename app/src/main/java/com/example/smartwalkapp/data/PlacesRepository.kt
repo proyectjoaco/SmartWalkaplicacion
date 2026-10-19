@@ -1,5 +1,6 @@
 package com.example.smartwalkapp.data
 
+import com.example.smartwalkapp.BuildConfig
 import com.example.smartwalkapp.data.api.GooglePlacesApi
 import com.example.smartwalkapp.data.model.Place
 import com.example.smartwalkapp.data.model.Geometry
@@ -10,7 +11,7 @@ import kotlinx.coroutines.withContext
 class PlacesRepository(private val api: GooglePlacesApi) {
     
     // In a real app, this would be in local.properties
-    private val API_KEY = "" 
+    private val API_KEY = BuildConfig.GOOGLE_API_KEY
 
     suspend fun getNearbyPlaces(lat: Double, lng: Double, type: String?): List<Place> = withContext(Dispatchers.IO) {
         if (API_KEY.isEmpty()) {

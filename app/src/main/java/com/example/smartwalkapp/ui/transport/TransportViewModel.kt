@@ -1,5 +1,7 @@
 package com.example.smartwalkapp.ui.transport
 
+import com.example.smartwalkapp.BuildConfig
+
 import android.app.Application
 import android.content.Intent
 import android.location.Geocoder
@@ -27,7 +29,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
-    private val GOOGLE_API_KEY = "AIzaSyBNxTN1HpmuINzIQT9q8EEHTfVg1kphJeg"
+    private val GOOGLE_API_KEY = BuildConfig.GOOGLE_API_KEY
 
     private val _uiState = MutableStateFlow<TransportUiState>(TransportUiState.Loading)
     val uiState: StateFlow<TransportUiState> = _uiState

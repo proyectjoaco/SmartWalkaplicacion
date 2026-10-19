@@ -32,6 +32,15 @@ android {
             "GPS_BAHIA_TOKEN",
             "\"${localProps.getProperty("GPS_BAHIA_TOKEN", "")}\""
         )
+
+        // Clave de Google Maps: una sola fuente para el manifest (Maps SDK) y para el código (REST).
+        // Si existe GOOGLE_MAPS_API_KEY en local.properties se usa esa; si no, la de abajo.
+        val googleKey = localProps.getProperty(
+            "GOOGLE_MAPS_API_KEY",
+            "AIzaSyBD9RhD9ummTj3ePme_Ty-eyXqkP0XUJ6I"
+        )
+        manifestPlaceholders["MAPS_API_KEY"] = googleKey
+        buildConfigField("String", "GOOGLE_API_KEY", "\"$googleKey\"")
     }
 
     buildTypes {

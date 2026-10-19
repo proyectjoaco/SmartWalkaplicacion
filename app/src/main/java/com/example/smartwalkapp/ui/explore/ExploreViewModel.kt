@@ -1,5 +1,7 @@
 package com.example.smartwalkapp.ui.explore
 
+import com.example.smartwalkapp.BuildConfig
+
 import android.annotation.SuppressLint
 import android.app.Application
 import android.speech.tts.TextToSpeech
@@ -24,7 +26,7 @@ import android.location.Location as AndroidLocation
 class ExploreViewModel(application: Application) : AndroidViewModel(application), TextToSpeech.OnInitListener {
     
     private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
-    private val GOOGLE_API_KEY = "AIzaSyBNxTN1HpmuINzIQT9q8EEHTfVg1kphJeg"
+    private val GOOGLE_API_KEY = BuildConfig.GOOGLE_API_KEY
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
 
