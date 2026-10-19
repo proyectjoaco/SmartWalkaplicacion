@@ -20,6 +20,18 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // El token de gpsbahia.com.ar se lee de local.properties (que no se sube a Git):
+        //   GPS_BAHIA_TOKEN=tu_token
+        val localProps = java.util.Properties().apply {
+            val f = rootProject.file("local.properties")
+            if (f.exists()) f.inputStream().use { load(it) }
+        }
+        buildConfigField(
+            "String",
+            "GPS_BAHIA_TOKEN",
+            "\"${localProps.getProperty("GPS_BAHIA_TOKEN", "")}\""
+        )
     }
 
     buildTypes {
@@ -37,6 +49,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

@@ -16,9 +16,13 @@ object RetrofitClient {
         .build()
 
     private val okHttpClient = OkHttpClient.Builder()
+        // gpsbahia.com.ar solo entrega datos a quien ya visitó la página principal,
+        // así que hay que conservar las cookies entre requests.
+        .cookieJar(MemoryCookieJar())
         .addInterceptor { chain ->
             val request = chain.request().newBuilder()
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+                .header("Referer", GPS_BAHIA_BASE_URL)
                 .build()
             chain.proceed(request)
         }

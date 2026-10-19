@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.smartwalkapp.data.api.RetrofitClient
 import com.example.smartwalkapp.data.api.SapemStop
 import com.example.smartwalkapp.data.api.BusArrival
+import com.example.smartwalkapp.data.repository.GpsBahiaRepository
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +29,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     val uiState: StateFlow<TransportUiState> = _uiState
 
     private val busRouteRepository = com.example.smartwalkapp.data.repository.BusRouteRepository(application)
+    private val gpsBahiaRepository = GpsBahiaRepository()
 
     init {
         tts = TextToSpeech(application, this)
@@ -43,16 +45,14 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
             // PRUEBA GPS BAHIA
             try {
 
-                val buses =
-                    RetrofitClient.gpsBahiaService
-                        .getBusLocations()
+                val buses = gpsBahiaRepository.getBuses()
 
                 Log.d(
                     "GPS_BAHIA",
-                    "Cantidad de colectivos: ${buses.data.size}"
+                    "Cantidad de colectivos: ${buses.size}"
                 )
 
-                buses.data.take(5).forEach { bus ->
+                buses.take(5).forEach { bus ->
                     Log.d(
                         "GPS_BAHIA",
                         "${bus.interno} - ${bus.lat}, ${bus.lng}"
@@ -263,6 +263,16 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     fun processVoiceCommand(query: String) {
         viewModelScope.launch {
             val lowerQuery = query.lowercase()
+
+            // Preguntas tipo "¿dónde está el colectivo?" / "¿cuánto falta?" / "¿cuál está más cerca?"
+            val preguntaPorUbicacion = Regex(
+                "d[oó]nde (est[aá]|viene|anda)|cu[aá]nto (falta|tarda|demora)|m[aá]s cerca|ya llega"
+            )
+            if (preguntaPorUbicacion.containsMatchIn(lowerQuery)) {
+                anunciarColectivosCercanos()
+                return@launch
+            }
+
             // Extraer el número de línea (ej: "512")
             val lineMatch = Regex("\\d+").find(lowerQuery)
             val lineNumber = lineMatch?.value ?: ""
@@ -313,6 +323,49 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                 startNavigationToStop(stop)
             }
         }
+    }
+
+    /** Dice por voz qué colectivos están más cerca de donde estoy y en cuánto tiempo llegarían (aprox). */
+    private suspend fun anunciarColectivosCercanos() {
+        val location = try {
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
+        } catch (e: Exception) {
+            null
+        }
+        if (location == null) {
+            speak("No pude obtener tu ubicación. Revisá que el GPS esté activado.")
+            return
+        }
+
+        val buses = try {
+            gpsBahiaRepository.getBuses()
+        } catch (e: Exception) {
+            Log.e("GPS_BAHIA", "No se pudo consultar GPS Bahía", e)
+            speak("No pude consultar la ubicación de los colectivos ahora.")
+            return
+        }
+
+        val cercanos = GpsBahiaRepository
+            .calcularCercania(buses, location.latitude, location.longitude)
+            // si se sabe que se alejan, se descartan; si no se sabe el rumbo, se dejan
+            .filter { it.seAcerca != false }
+            .take(3)
+
+        if (cercanos.isEmpty()) {
+            speak("No encontré colectivos acercándose en este momento.")
+            return
+        }
+
+        val texto = cercanos.joinToString(". ") { c ->
+            val distancia = if (c.metros < 1000) {
+                "${c.metros.toInt()} metros"
+            } else {
+                String.format(Locale("es", "AR"), "%.1f kilómetros", c.metros / 1000)
+            }
+            val tiempo = if (c.minutos <= 1) "menos de un minuto" else "unos ${c.minutos} minutos"
+            "El colectivo ${c.bus.nombre} está a $distancia, llega en aproximadamente $tiempo"
+        }
+        speak(texto)
     }
 
     override fun onCleared() {
