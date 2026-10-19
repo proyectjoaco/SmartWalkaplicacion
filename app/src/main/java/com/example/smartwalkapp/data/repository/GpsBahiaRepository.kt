@@ -96,6 +96,44 @@ class GpsBahiaRepository(
         private const val VELOCIDAD_PROMEDIO_KMH = 18.0
         private const val MAX_SEGUNDOS_SIN_SENAL = 180L
 
+        /** Distancia en metros desde un punto hasta la polilínea más cercana de una ruta. */
+        fun distanciaARuta(lat: Double, lng: Double, puntos: List<Pair<Double, Double>>): Double {
+            val metrosPorGrado = 111320.0
+            val cosLat = Math.cos(Math.toRadians(lat))
+            fun x(lo: Double) = lo * metrosPorGrado * cosLat
+            fun y(la: Double) = la * metrosPorGrado
+
+            val px = x(lng); val py = y(lat)
+            var mejor = Double.MAX_VALUE
+            for (i in 0 until puntos.size - 1) {
+                val ax = x(puntos[i].second);     val ay = y(puntos[i].first)
+                val bx = x(puntos[i + 1].second); val by = y(puntos[i + 1].first)
+                val dx = bx - ax; val dy = by - ay
+                val largo2 = dx * dx + dy * dy
+                val t = if (largo2 == 0.0) 0.0
+                        else (((px - ax) * dx + (py - ay) * dy) / largo2).coerceIn(0.0, 1.0)
+                val d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+                if (d < mejor) mejor = d
+            }
+            return mejor
+        }
+
+        /**
+         * El JSON de GPS Bahía no dice a qué línea pertenece cada colectivo, así que se
+         * considera "de la línea X" al que está sobre (a menos de [toleranciaMetros]) alguno
+         * de los recorridos de X. Es una aproximación: puede incluir un colectivo de otra
+         * línea que comparta calles con X.
+         */
+        fun busesEnLinea(
+            buses: List<BusPosition>,
+            rutas: List<RutaLinea>,
+            toleranciaMetros: Double = 80.0
+        ): List<BusPosition> =
+            buses.filter { bus ->
+                (bus.segundosSinSenal ?: 0) < MAX_SEGUNDOS_SIN_SENAL &&
+                    rutas.any { distanciaARuta(bus.lat, bus.lng, it.puntos) < toleranciaMetros }
+            }
+
         /**
          * Ordena los colectivos de más cerca a más lejos de (miLat, miLng).
          * Descarta los que hace más de 3 minutos que no reportan (apagados / en cochera).

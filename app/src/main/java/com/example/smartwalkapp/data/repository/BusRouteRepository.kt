@@ -4,7 +4,35 @@ import android.content.Context
 import android.util.Log
 import com.example.smartwalkapp.data.api.SapemStop
 
+/** Recorrido de una línea (una variante: ida, vuelta, etc.) como lista de puntos (lat, lng). */
+data class RutaLinea(
+    val nombre: String,                       // ej: "500 Ida"
+    val linea: String,                        // ej: "500"
+    val puntos: List<Pair<Double, Double>>
+)
+
 class BusRouteRepository(private val context: Context) {
+
+    /** Lee todos los recorridos de recorridos-colectivos.csv con su número de línea. */
+    fun getRutas(): List<RutaLinea> {
+        return try {
+            val content = context.assets.open("recorridos-colectivos.csv")
+                .bufferedReader().use { it.readText() }
+            val nombres = Regex("\"(\\d+[^\",]*)[,\"]").findAll(content)
+                .map { it.groupValues[1].trim() }.toList()
+            val wkts = Regex("LINESTRING Z \\(([^\\)]+)\\)").findAll(content)
+                .map { it.groupValues[1] }.toList()
+
+            nombres.zip(wkts).mapNotNull { (nombre, wkt) ->
+                val linea = Regex("^\\d+").find(nombre)?.value
+                val puntos = extractPointsFromWkt(wkt)
+                if (linea != null && puntos.size >= 2) RutaLinea(nombre, linea, puntos) else null
+            }
+        } catch (e: Exception) {
+            Log.e("BusRouteRepository", "Error leyendo recorridos", e)
+            emptyList()
+        }
+    }
 
     fun getAllStopsFromCsv(): List<SapemStop> {
         val stops = mutableListOf<SapemStop>()

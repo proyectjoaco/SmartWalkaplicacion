@@ -2,6 +2,8 @@ package com.example.smartwalkapp.ui.transport
 
 import android.app.Application
 import android.content.Intent
+import android.location.Geocoder
+import android.location.Location
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -12,6 +14,8 @@ import com.example.smartwalkapp.data.api.BusArrival
 import com.example.smartwalkapp.data.repository.GpsBahiaRepository
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -264,6 +268,15 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val lowerQuery = query.lowercase()
 
+            // "¿Dónde está la 500?" -> ubicación aproximada de esa línea
+            val lineaPreguntada = Regex("\\b(\\d{3})\\b").find(lowerQuery)?.groupValues?.get(1)
+            val preguntaDondeLinea = Regex("d[oó]nde (est[aá]|viene|anda|va)|cu[aá]nto falta")
+                .containsMatchIn(lowerQuery)
+            if (lineaPreguntada != null && preguntaDondeLinea) {
+                anunciarUbicacionLinea(lineaPreguntada)
+                return@launch
+            }
+
             // Preguntas tipo "¿dónde está el colectivo?" / "¿cuánto falta?" / "¿cuál está más cerca?"
             val preguntaPorUbicacion = Regex(
                 "d[oó]nde (est[aá]|viene|anda)|cu[aá]nto (falta|tarda|demora)|m[aá]s cerca|ya llega"
@@ -323,6 +336,94 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                 startNavigationToStop(stop)
             }
         }
+    }
+
+    /** "Norte", "sudeste", etc. a partir de un rumbo en grados (0 = norte). */
+    private fun puntoCardinal(grados: Float): String {
+        val puntos = listOf("norte", "noreste", "este", "sudeste", "sur", "sudoeste", "oeste", "noroeste")
+        val g = ((grados % 360f) + 360f) % 360f
+        return puntos[((g + 22.5f) / 45f).toInt() % 8]
+    }
+
+    /** Calle y barrio aproximados de una coordenada (null si no se pudo averiguar). */
+    private suspend fun nombreDeLugar(lat: Double, lng: Double): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                if (!Geocoder.isPresent()) return@withContext null
+                @Suppress("DEPRECATION")
+                val dir = Geocoder(getApplication(), Locale("es", "AR"))
+                    .getFromLocation(lat, lng, 1)?.firstOrNull() ?: return@withContext null
+                val calle = dir.thoroughfare
+                val barrio = dir.subLocality
+                when {
+                    calle != null && barrio != null -> "$calle, barrio $barrio"
+                    calle != null -> calle
+                    barrio != null -> "barrio $barrio"
+                    else -> null
+                }
+            } catch (e: Exception) {
+                Log.e("TransportVM", "Geocoder falló", e)
+                null
+            }
+        }
+
+    private fun textoDistancia(metros: Double): String =
+        if (metros < 1000) "${metros.toInt()} metros"
+        else String.format(Locale("es", "AR"), "%.1f kilómetros", metros / 1000)
+
+    /** "¿Dónde está la 500?": dice por voz dónde hay colectivos de esa línea, de forma aproximada. */
+    private suspend fun anunciarUbicacionLinea(linea: String) {
+        val rutas = busRouteRepository.getRutas().filter { it.linea == linea }
+        if (rutas.isEmpty()) {
+            speak("No tengo el recorrido de la línea $linea.")
+            return
+        }
+
+        val buses = try {
+            gpsBahiaRepository.getBuses()
+        } catch (e: Exception) {
+            Log.e("GPS_BAHIA", "No se pudo consultar GPS Bahía", e)
+            speak("No pude consultar la ubicación de los colectivos ahora.")
+            return
+        }
+
+        val enLinea = GpsBahiaRepository.busesEnLinea(buses, rutas)
+        if (enLinea.isEmpty()) {
+            speak("No encontré colectivos de la línea $linea circulando en este momento.")
+            return
+        }
+
+        val location = try {
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
+        } catch (e: Exception) {
+            null
+        }
+
+        val cantidad = if (enLinea.size == 1) "un colectivo" else "${enLinea.size} colectivos"
+        if (location == null) {
+            val lugar = nombreDeLugar(enLinea.first().lat, enLinea.first().lng)
+            speak(
+                "Encontré $cantidad que parecen ser de la línea $linea." +
+                    (lugar?.let { " Uno está cerca de $it." } ?: "")
+            )
+            return
+        }
+
+        // El más cercano a mí, con su calle aproximada y hacia dónde queda
+        val res = FloatArray(2)
+        val masCercano = enLinea.minByOrNull {
+            Location.distanceBetween(location.latitude, location.longitude, it.lat, it.lng, res)
+            res[0]
+        }!!
+        Location.distanceBetween(location.latitude, location.longitude, masCercano.lat, masCercano.lng, res)
+
+        val lugar = nombreDeLugar(masCercano.lat, masCercano.lng)
+        val referencia = "a ${textoDistancia(res[0].toDouble())} hacia el ${puntoCardinal(res[1])} de donde estás"
+        speak(
+            "Encontré $cantidad que parecen ser de la línea $linea. " +
+                "El más cercano está " +
+                (lugar?.let { "cerca de $it, " } ?: "") + referencia + "."
+        )
     }
 
     /** Dice por voz qué colectivos están más cerca de donde estoy y en cuánto tiempo llegarían (aprox). */
