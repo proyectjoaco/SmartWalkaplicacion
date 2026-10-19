@@ -124,6 +124,9 @@ class NavigationService : Service(), TextToSpeech.OnInitListener {
                 if (navigationSteps.isNotEmpty()) {
                     speak("Ruta encontrada. " + navigationSteps[0].html_instructions)
                 }
+            } else {
+                Log.e("NavService", "Google Directions: ${response.status} - ${response.error_message}")
+                speak("No pude calcular la ruta con Google Maps.")
             }
         } catch (e: Exception) {
             Log.e("NavService", "Directions API failed", e)

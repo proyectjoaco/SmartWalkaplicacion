@@ -56,7 +56,8 @@ data class Location(
 
 data class DirectionsResponse(
     val routes: List<Route>,
-    val status: String
+    val status: String,
+    val error_message: String? = null
 )
 
 data class Route(

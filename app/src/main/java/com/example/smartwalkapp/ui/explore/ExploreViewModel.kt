@@ -188,6 +188,9 @@ class ExploreViewModel(application: Application) : AndroidViewModel(application)
                     } else {
                         speak("Ruta iniciada. $firstStep")
                     }
+                } else {
+                    Log.e("Routing", "Google Directions: ${response.status} - ${response.error_message}")
+                    speak("No pude calcular la ruta con Google Maps.")
                 }
             } catch (e: Exception) {
                 Log.e("Routing", "Error", e)
@@ -203,6 +206,17 @@ class ExploreViewModel(application: Application) : AndroidViewModel(application)
         } catch (e: Exception) { null }
     }
 
+    /** true si Google rechazó la consulta (clave inválida, API no habilitada, cuota, etc.). */
+    private fun placesFallo(r: com.example.smartwalkapp.data.model.PlacesResponse): Boolean {
+        val s = r.status
+        if (s != null && s != "OK" && s != "ZERO_RESULTS") {
+            Log.e("Explore", "Google Places: $s - ${r.errorMessage}")
+            speak("No pude buscar con Google Maps. Revisá la clave de la API.")
+            return true
+        }
+        return false
+    }
+
     fun onSearchQueryChange(newQuery: String) { _searchQuery.value = newQuery }
     fun executeSearch() { performSearch(_searchQuery.value) }
 
@@ -211,6 +225,7 @@ class ExploreViewModel(application: Application) : AndroidViewModel(application)
             val userLoc = getCurrentUserLocation() ?: return@launch
             try {
                 val response = RetrofitClient.googleMapsService.searchPlaces(_searchQuery.value, "${userLoc.lat},${userLoc.lng}", 5000, GOOGLE_API_KEY)
+                if (placesFallo(response)) return@launch
                 if (response.results.isNotEmpty()) {
                     // Ordenar por distancia antes de elegir el primero
                     val sortedResults = response.results.sortedBy { place ->
@@ -239,9 +254,12 @@ class ExploreViewModel(application: Application) : AndroidViewModel(application)
             val userLoc = getCurrentUserLocation() ?: return@launch
             try {
                 val response = RetrofitClient.googleMapsService.searchPlaces(query, "${userLoc.lat},${userLoc.lng}", 5000, GOOGLE_API_KEY)
+                if (placesFallo(response)) return@launch
                 _uiState.value = ExploreUiState.Success(response.results, userLoc)
                 speak("Encontrados ${response.results.size} resultados.")
-            } catch (e: Exception) { }
+            } catch (e: Exception) {
+                Log.e("Explore", "Search error", e)
+            }
         }
     }
 
@@ -251,6 +269,7 @@ class ExploreViewModel(application: Application) : AndroidViewModel(application)
             val userLoc = getCurrentUserLocation() ?: return@launch
             try {
                 val response = RetrofitClient.googleMapsService.getNearbyPlaces("${userLoc.lat},${userLoc.lng}", 2000, type, GOOGLE_API_KEY)
+                if (placesFallo(response)) return@launch
                 _uiState.value = ExploreUiState.Success(response.results, userLoc)
                 val locationHelper = com.example.smartwalkapp.data.LocationHelper(getApplication())
                 val address = locationHelper.getCurrentAddress() ?: "desconocida"

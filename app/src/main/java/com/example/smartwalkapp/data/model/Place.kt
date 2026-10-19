@@ -5,7 +5,11 @@ import com.squareup.moshi.JsonClass
 
 @JsonClass(generateAdapter = true)
 data class PlacesResponse(
-    @Json(name = "results") val results: List<Place>
+    @Json(name = "results") val results: List<Place>,
+    // Google responde "REQUEST_DENIED", "OVER_QUERY_LIMIT", etc. con results vacío;
+    // sin leer estos campos el error pasa desapercibido.
+    @Json(name = "status") val status: String? = null,
+    @Json(name = "error_message") val errorMessage: String? = null
 )
 
 @JsonClass(generateAdapter = true)

@@ -192,6 +192,10 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                 apiKey = GOOGLE_API_KEY
             )
             
+            if (response.status != null && response.status != "OK" && response.status != "ZERO_RESULTS") {
+                Log.e("TransportVM", "Google Places: ${response.status} - ${response.errorMessage}")
+            }
+
             val googleStops = response.results.map { place ->
                 SapemStop(
                     id = "google_${place.name}",
