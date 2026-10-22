@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -23,7 +25,7 @@ android {
 
         // El token de gpsbahia.com.ar se lee de local.properties (que no se sube a Git):
         //   GPS_BAHIA_TOKEN=tu_token
-        val localProps = java.util.Properties().apply {
+        val localProps = Properties().apply {
             val f = rootProject.file("local.properties")
             if (f.exists()) f.inputStream().use { load(it) }
         }
