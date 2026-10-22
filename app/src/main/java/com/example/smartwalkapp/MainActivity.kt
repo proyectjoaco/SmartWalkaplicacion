@@ -72,7 +72,14 @@ class MainActivity : ComponentActivity() {
                             val data = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
                             data?.get(0)?.let { query ->
                                 val lowerQuery = query.lowercase()
-                                if (lowerQuery.contains("colectivo") || lowerQuery.contains("bus") || lowerQuery.contains("línea") || lowerQuery.contains("linea")) {
+                                // También cuenta como pregunta de colectivos si menciona un número de línea
+                                // de 3 dígitos ("dónde está la 500") o pregunta cuánto falta / ya llega.
+                                val esConsultaDeColectivo =
+                                    lowerQuery.contains("colectivo") || lowerQuery.contains("bus") ||
+                                    lowerQuery.contains("línea") || lowerQuery.contains("linea") ||
+                                    Regex("\\b\\d{3}\\b").containsMatchIn(lowerQuery) ||
+                                    Regex("cu[aá]nto (falta|tarda|demora)|ya llega").containsMatchIn(lowerQuery)
+                                if (esConsultaDeColectivo) {
                                     transportViewModel.processVoiceCommand(query)
                                     navController.navigate("transport")
                                 } else {
