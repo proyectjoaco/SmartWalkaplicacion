@@ -128,6 +128,9 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
 
     refreshStops()
 }
+        } catch (e: Exception) {
+            Log.e("TransportVM", "loadInitialData failed", e)
+            _uiState.value = TransportUiState.Error("No se pudieron cargar las paradas")
         }
     }
 }
