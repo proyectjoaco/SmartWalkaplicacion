@@ -114,7 +114,24 @@ class ParadasRepository(
                 lineas = lineas
             )
         }
-        return paradas
+        return unirRepetidas(paradas)
+    }
+
+    /**
+     * get_paradas trae la misma parada física varias veces (una por línea o por sentido).
+     * Se unen las que tienen el mismo nombre y están a menos de ~15 m, sumando sus líneas.
+     */
+    private fun unirRepetidas(paradas: List<ParadaGps>): List<ParadaGps> {
+        val grupos = LinkedHashMap<String, MutableList<ParadaGps>>()
+        for (p in paradas) {
+            val clave = "${p.nombre.lowercase().replace(Regex("\\s+"), " ")}|" +
+                "${Math.round(p.lat * 7000)}|${Math.round(p.lng * 7000)}"
+            grupos.getOrPut(clave) { mutableListOf() }.add(p)
+        }
+        return grupos.values.map { g ->
+            if (g.size == 1) g[0]
+            else g[0].copy(lineas = g.flatMap { it.lineas }.distinctBy { it.linea to it.sentido })
+        }
     }
 
     /** "latLng" viene como texto: {"lat":-38.77,"lng":-62.24}. También acepta un objeto directo. */
