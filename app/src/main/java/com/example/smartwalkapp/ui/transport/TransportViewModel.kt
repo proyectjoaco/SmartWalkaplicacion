@@ -14,6 +14,9 @@ import com.example.smartwalkapp.data.api.RetrofitClient
 import com.example.smartwalkapp.data.api.SapemStop
 import com.example.smartwalkapp.data.api.BusArrival
 import com.example.smartwalkapp.data.repository.GpsBahiaRepository
+import com.example.smartwalkapp.data.repository.ParadasRepository
+import com.example.smartwalkapp.data.repository.ParadaCercana
+import com.example.smartwalkapp.data.repository.toSapemStop
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +39,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val busRouteRepository = com.example.smartwalkapp.data.repository.BusRouteRepository(application)
     private val gpsBahiaRepository = GpsBahiaRepository()
+    private val paradasRepository = ParadasRepository()
 
     init {
         tts = TextToSpeech(application, this)
@@ -114,9 +118,28 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
         allStops.take(20)
     }
 
-    _uiState.value = TransportUiState.Success(processedStops)
+    // Paradas reales de la 516 (gpsbahia: get_frecuencias_puntos/15), primero y con su próximo horario
+    val paradasGps = if (currentLocation != null) {
+        try {
+            paradasRepository.paradasCercanas(
+                "516", currentLocation.latitude, currentLocation.longitude, 6
+            )
+        } catch (e: Exception) {
+            Log.e("TransportVM", "No se pudieron cargar las paradas de GPS Bahía", e)
+            emptyList()
+        }
+    } else {
+        emptyList()
+    }
 
-    speak("He cargado las paradas de colectivo más cercanas.")
+    val todasLasParadas = (paradasGps.map { it.toSapemStop() } + processedStops).distinctBy { it.id }
+    _uiState.value = TransportUiState.Success(todasLasParadas)
+
+    speak(
+        paradasGps.firstOrNull()?.let {
+            "La parada de la 516 más cercana es ${it.parada.nombre}, a ${textoDistancia(it.metros)}."
+        } ?: "He cargado las paradas de colectivo más cercanas."
+    )
 
     if (currentLocation != null) {
         refreshStopsInBackground(
@@ -226,6 +249,23 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun fetchArrivals(stop: SapemStop) {
         viewModelScope.launch {
+            // Paradas de GPS Bahía: se leen los horarios programados de esa parada
+            if (stop.id.startsWith("gps_")) {
+                val linea = stop.id.split("_").getOrNull(1) ?: return@launch
+                val parada = try {
+                    paradasRepository.getParadas(linea).firstOrNull { it.id == stop.id }
+                } catch (e: Exception) {
+                    null
+                }
+                val proxima = parada?.let { paradasRepository.proximaLlegada(it) }
+                if (proxima == null) {
+                    speak("No tengo horarios para esta parada.")
+                } else {
+                    speak("En la parada ${stop.nombre}. " + textoProximaLlegada(linea, proxima))
+                }
+                return@launch
+            }
+
             val isReference = stop.id.startsWith("e") || 
                               stop.id.startsWith("csv_") || 
                               stop.id.startsWith("google_")
@@ -277,6 +317,17 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     fun processVoiceCommand(query: String) {
         viewModelScope.launch {
             val lowerQuery = query.lowercase()
+
+            // "¿Dónde está la parada de la 516 más cercana?" -> parada y horario, con tu ubicación.
+            // Se evalúa antes que "dónde está la 516", que habla del colectivo y no de la parada.
+            if (lowerQuery.contains("parada")) {
+                val lineaParada = Regex("\\b(\\d{3})\\b").find(lowerQuery)?.groupValues?.get(1)
+                    ?: ParadasRepository.LINEA_ID.keys.singleOrNull()   // si hay una sola línea habilitada
+                if (lineaParada != null) {
+                    anunciarParadaCercana(lineaParada)
+                    return@launch
+                }
+            }
 
             // "¿Dónde está la 500?" -> ubicación aproximada de esa línea
             val lineaPreguntada = Regex("\\b(\\d{3})\\b").find(lowerQuery)?.groupValues?.get(1)
@@ -380,6 +431,65 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     private fun textoDistancia(metros: Double): String =
         if (metros < 1000) "${metros.toInt()} metros"
         else String.format(Locale("es", "AR"), "%.1f kilómetros", metros / 1000)
+
+    private fun textoMinutos(minutos: Int): String =
+        if (minutos <= 1) "menos de un minuto" else "unos $minutos minutos"
+
+    /** "El próximo 516 pasa a las 14:32, en unos 12 minutos. Después a las 15:02." */
+    private fun textoProximaLlegada(linea: String, p: com.example.smartwalkapp.data.repository.ProximaLlegada): String {
+        val base = if (p.esManana) {
+            "El próximo $linea pasa mañana a las ${p.hora}."
+        } else {
+            "El próximo $linea pasa a las ${p.hora}, en ${textoMinutos(p.minutos)}."
+        }
+        return base + (p.siguiente?.let { " Después a las $it." } ?: "")
+    }
+
+    /** "¿Dónde está la parada de la 516 más cercana?": parada más cercana de cada sentido y su horario. */
+    private suspend fun anunciarParadaCercana(linea: String) {
+        if (linea !in ParadasRepository.LINEA_ID) {
+            speak("Por ahora solo tengo las paradas de la línea ${ParadasRepository.LINEA_ID.keys.joinToString(" y ")}.")
+            return
+        }
+
+        val location = try {
+            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
+        } catch (e: Exception) {
+            null
+        }
+        if (location == null) {
+            speak("No pude obtener tu ubicación. Revisá que el GPS esté activado.")
+            return
+        }
+
+        val cercanas: List<ParadaCercana> = try {
+            paradasRepository.paradasCercanas(linea, location.latitude, location.longitude, 500)
+        } catch (e: Exception) {
+            Log.e("PARADAS", "No se pudieron leer las paradas", e)
+            emptyList()
+        }
+        if (cercanas.isEmpty()) {
+            speak("No pude obtener las paradas de la línea $linea ahora.")
+            return
+        }
+
+        // La más cercana de cada sentido (ida y vuelta), la más próxima primero
+        val porSentido = cercanas
+            .groupBy { it.parada.sentido }
+            .values.map { it.first() }
+            .sortedBy { it.metros }
+            .take(2)
+
+        val partes = porSentido.mapIndexed { i, c ->
+            val sentido = if (c.parada.sentido.isNotEmpty()) "sentido ${c.parada.sentido.lowercase()}, " else ""
+            val donde = "${c.parada.nombre}, $sentido" +
+                "a ${textoDistancia(c.metros)} hacia el ${puntoCardinal(c.rumboDesdeMi)} de donde estás."
+            val horario = c.proxima?.let { " " + textoProximaLlegada(linea, it) } ?: " No tengo horarios para esta parada."
+            if (i == 0) "La parada de la $linea más cercana es $donde$horario"
+            else "En el otro sentido, la más cercana es $donde$horario"
+        }
+        speak(partes.joinToString(" "))
+    }
 
     /** "¿Dónde está la 500?": dice por voz dónde hay colectivos de esa línea, de forma aproximada. */
     private suspend fun anunciarUbicacionLinea(linea: String) {

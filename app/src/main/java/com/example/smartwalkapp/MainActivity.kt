@@ -77,6 +77,7 @@ class MainActivity : ComponentActivity() {
                                 val esConsultaDeColectivo =
                                     lowerQuery.contains("colectivo") || lowerQuery.contains("bus") ||
                                     lowerQuery.contains("línea") || lowerQuery.contains("linea") ||
+                                    lowerQuery.contains("parada") ||
                                     Regex("\\b\\d{3}\\b").containsMatchIn(lowerQuery) ||
                                     Regex("cu[aá]nto (falta|tarda|demora)|ya llega").containsMatchIn(lowerQuery)
                                 if (esConsultaDeColectivo) {
