@@ -134,12 +134,7 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
     val paradasAMostrar = if (paradasGps.isNotEmpty()) paradasGps.map { it.toSapemStop() } else processedStops
     _uiState.value = TransportUiState.Success(paradasAMostrar)
 
-    speak(
-        paradasGps.firstOrNull()?.let {
-            "La parada más cercana es ${it.parada.nombre}, a ${textoDistancia(it.metros)}. " +
-                "Pasan las líneas ${it.parada.nombresDeLineas.joinToString(", ")}."
-        } ?: "He cargado las paradas de colectivo más cercanas."
-    )
+    // Al abrir la pantalla no se habla: la parada más cercana se dice solo cuando se pregunta.
 
     if (currentLocation != null && paradasGps.isEmpty()) {
         refreshStopsInBackground(
