@@ -1,6 +1,5 @@
 package com.example.smartwalkapp.data.api
 
-import com.squareup.moshi.Json
 import okhttp3.ResponseBody
 import retrofit2.http.GET
 import retrofit2.http.Path
@@ -28,31 +27,6 @@ data class BusLocation(
     val direccion: String? = null
 )
 
-// Respuesta de web2/get_frecuencias_puntos/{id}: las paradas de una línea con sus horarios.
-data class FrecuenciasResponse(
-    val status: String? = null,
-    val frecuencias: List<Frecuencia> = emptyList()
-)
-
-data class Frecuencia(
-    @Json(name = "Id") val id: String? = null,
-    @Json(name = "punto_id") val puntoId: String? = null,
-    @Json(name = "linea_id") val lineaId: String? = null,
-    // Horas separadas por coma, por ejemplo "6:24, 6:54, 7:24"
-    val horarios: String? = null,
-    @Json(name = "horarios_sabados") val horariosSabados: String? = null,
-    @Json(name = "horarios_domingos") val horariosDomingos: String? = null,
-    val punto: PuntoParada? = null
-)
-
-data class PuntoParada(
-    @Json(name = "Id") val id: String? = null,
-    val nombre: String? = null,
-    val direccion: String? = null,   // sentido: "IDA" o "VUELTA"
-    val lat: String? = null,
-    val lng: String? = null
-)
-
 interface GPSBahiaService {
 
     /**
@@ -69,7 +43,10 @@ interface GPSBahiaService {
         @Query("vggaxqq") token: String
     ): GPSBahiaResponse
 
-    /** Paradas y horarios de una línea (ej: 15 = línea 516). */
+    /**
+     * Paradas y horarios de una línea (ej: 15 = línea 516). Se devuelve el cuerpo crudo
+     * y se lee con org.json (ver ParadasRepository), para tolerar cualquier tipo de campo.
+     */
     @GET("web2/get_frecuencias_puntos/{id}")
-    suspend fun getFrecuencias(@Path("id") id: Int): FrecuenciasResponse
+    suspend fun getFrecuencias(@Path("id") id: Int): ResponseBody
 }

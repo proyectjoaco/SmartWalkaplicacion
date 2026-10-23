@@ -2,10 +2,12 @@ package com.example.smartwalkapp.data.repository
 
 import android.location.Location
 import android.util.Log
-import com.example.smartwalkapp.data.api.Frecuencia
 import com.example.smartwalkapp.data.api.GPSBahiaService
 import com.example.smartwalkapp.data.api.RetrofitClient
 import com.example.smartwalkapp.data.api.SapemStop
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
@@ -69,13 +71,60 @@ class ParadasRepository(
 
     private suspend fun pedir(linea: String, id: Int): List<ParadaLinea> =
         try {
-            service.getFrecuencias(id).frecuencias.mapNotNull { it.toParada(linea) }
+            val crudo = withContext(Dispatchers.IO) {
+                service.getFrecuencias(id).use { it.string() }
+            }
+            parsear(linea, crudo)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e("PARADAS", "Error pidiendo get_frecuencias_puntos/$id", e)
             emptyList()
         }
+
+    /**
+     * Lee la respuesta con org.json en lugar de Moshi: así no importa si un campo viene como
+     * texto, número o null. Los valores faltantes simplemente se saltean.
+     */
+    private fun parsear(linea: String, crudo: String): List<ParadaLinea> {
+        // Por si el servidor mete texto antes o después del JSON
+        val ini = crudo.indexOf('{')
+        val fin = crudo.lastIndexOf('}')
+        if (ini < 0 || fin <= ini) {
+            Log.e("PARADAS", "La respuesta no es JSON. Empieza con: ${crudo.take(200)}")
+            return emptyList()
+        }
+
+        val raiz = JSONObject(crudo.substring(ini, fin + 1))
+        val arreglo = raiz.optJSONArray("frecuencias")
+        if (arreglo == null) {
+            Log.e("PARADAS", "La respuesta no trae 'frecuencias'. Empieza con: ${crudo.take(200)}")
+            return emptyList()
+        }
+
+        val paradas = mutableListOf<ParadaLinea>()
+        for (i in 0 until arreglo.length()) {
+            val f = arreglo.optJSONObject(i) ?: continue
+            val punto = f.optJSONObject("punto") ?: continue
+            val lat = punto.optString("lat").toDoubleOrNull() ?: continue
+            val lng = punto.optString("lng").toDoubleOrNull() ?: continue
+            val puntoId = punto.optString("Id").ifEmpty { f.optString("punto_id") }
+            if (puntoId.isEmpty()) continue
+
+            paradas += ParadaLinea(
+                linea = linea,
+                puntoId = puntoId,
+                nombre = punto.optString("nombre").ifEmpty { "Parada" },
+                sentido = punto.optString("direccion").uppercase(),
+                lat = lat,
+                lng = lng,
+                horariosHabiles = parseHorarios(f.optString("horarios")),
+                horariosSabados = parseHorarios(f.optString("horarios_sabados")),
+                horariosDomingos = parseHorarios(f.optString("horarios_domingos"))
+            )
+        }
+        return paradas
+    }
 
     /** Las paradas de la línea ordenadas de más cerca a más lejos de (lat, lng). */
     suspend fun paradasCercanas(linea: String, lat: Double, lng: Double, max: Int = 6): List<ParadaCercana> {
@@ -118,23 +167,6 @@ class ParadasRepository(
 
     private fun formato(minutos: Int): String =
         String.format(Locale.US, "%d:%02d", (minutos / 60) % 24, minutos % 60)
-
-    private fun Frecuencia.toParada(linea: String): ParadaLinea? {
-        val p = punto ?: return null
-        val la = p.lat?.toDoubleOrNull() ?: return null
-        val lo = p.lng?.toDoubleOrNull() ?: return null
-        return ParadaLinea(
-            linea = linea,
-            puntoId = p.id ?: puntoId ?: return null,
-            nombre = p.nombre ?: "Parada",
-            sentido = (p.direccion ?: "").uppercase(),
-            lat = la,
-            lng = lo,
-            horariosHabiles = parseHorarios(horarios),
-            horariosSabados = parseHorarios(horariosSabados),
-            horariosDomingos = parseHorarios(horariosDomingos)
-        )
-    }
 
     // Acepta "6:24, 6:54" o "06:24;06:54": busca todas las horas H:MM del texto.
     private fun parseHorarios(texto: String?): List<Int> =
