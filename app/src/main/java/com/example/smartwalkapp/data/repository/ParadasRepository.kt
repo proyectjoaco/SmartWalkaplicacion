@@ -13,7 +13,8 @@ import org.json.JSONObject
 /** Una línea que pasa por una parada, con el sentido en que lo hace ("ida" o "vuelta"). */
 data class LineaDeParada(
     val linea: String,      // "500", "516", "513 EX", etc.
-    val sentido: String
+    val sentido: String,
+    val lineaId: String = ""   // linea_id de gpsbahia (el mismo número que track_data/N.json)
 )
 
 /** Una parada de gpsbahia.com.ar (web2/get_paradas). Puede servir a varias líneas. */
@@ -114,7 +115,10 @@ class ParadasRepository(
                 lineas = lineas
             )
         }
-        return unirRepetidas(paradas)
+        val unidas = unirRepetidas(paradas)
+        Log.d("PARADAS", "Líneas presentes: " +
+            unidas.flatMap { it.lineas }.map { "${it.linea}(id ${it.lineaId})" }.distinct().sorted().joinToString())
+        return unidas
     }
 
     /**
@@ -130,7 +134,7 @@ class ParadasRepository(
         }
         return grupos.values.map { g ->
             if (g.size == 1) g[0]
-            else g[0].copy(lineas = g.flatMap { it.lineas }.distinctBy { it.linea to it.sentido })
+            else g[0].copy(lineas = g.flatMap { it.lineas }.distinctBy { Triple(it.linea, it.sentido, it.lineaId) })
         }
     }
 
@@ -158,7 +162,7 @@ class ParadasRepository(
         for (i in 0 until arreglo.length()) {
             val o = arreglo.optJSONObject(i) ?: continue
             val nombre = o.optString("nombre").trim()
-            if (nombre.isNotEmpty()) lineas += LineaDeParada(nombre, o.optString("sentido").lowercase())
+            if (nombre.isNotEmpty()) lineas += LineaDeParada(nombre, o.optString("sentido").lowercase(), o.optString("linea_id"))
         }
         return lineas
     }
@@ -172,7 +176,7 @@ class ParadasRepository(
         return getTodas()
             .mapNotNull { p ->
                 val sentido = if (linea != null) {
-                    val l = p.lineas.firstOrNull { coincide(it.linea, linea) } ?: return@mapNotNull null
+                    val l = p.lineas.firstOrNull { coincide(it, linea) } ?: return@mapNotNull null
                     l.sentido.ifEmpty { p.sentido }
                 } else {
                     p.sentido
@@ -184,8 +188,10 @@ class ParadasRepository(
             .take(max)
     }
 
-    private fun coincide(nombreLinea: String, buscada: String): Boolean =
-        nombreLinea == buscada || nombreLinea.startsWith("$buscada ")
+    // Coincide por nombre ("516", "513 EX", "521 Bosque Alto") o por el linea_id de track_data (520 -> 30)
+    private fun coincide(l: LineaDeParada, buscada: String): Boolean =
+        l.linea == buscada || l.linea.startsWith("$buscada ") || l.linea.contains(buscada) ||
+            (l.lineaId.isNotEmpty() && l.lineaId == GpsBahiaRepository.TRACK_ID_POR_LINEA[buscada]?.toString())
 
     companion object {
         private const val CACHE_MS = 6 * 60 * 60 * 1000L
