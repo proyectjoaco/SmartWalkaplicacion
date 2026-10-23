@@ -44,9 +44,9 @@ interface GPSBahiaService {
     ): GPSBahiaResponse
 
     /**
-     * Paradas y horarios de una línea (ej: 15 = línea 516). Se devuelve el cuerpo crudo
-     * y se lee con org.json (ver ParadasRepository), para tolerar cualquier tipo de campo.
+     * Todas las paradas de todas las líneas (500 a 521). Se devuelve el cuerpo crudo y se lee con
+     * org.json (ver ParadasRepository), porque "latLng" y "lineas" vienen como texto con JSON adentro.
      */
-    @GET("web2/get_frecuencias_puntos/{id}")
-    suspend fun getFrecuencias(@Path("id") id: Int): ResponseBody
+    @GET("web2/get_paradas")
+    suspend fun getParadas(): ResponseBody
 }

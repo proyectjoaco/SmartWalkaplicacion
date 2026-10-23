@@ -7,87 +7,80 @@ import com.example.smartwalkapp.data.api.RetrofitClient
 import com.example.smartwalkapp.data.api.SapemStop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Calendar
-import java.util.Locale
-import java.util.TimeZone
 
-/** Una parada de una línea, con sus horarios (en minutos desde la medianoche). */
-data class ParadaLinea(
-    val linea: String,
-    val puntoId: String,
-    val nombre: String,
-    val sentido: String,                 // "IDA" o "VUELTA"
-    val lat: Double,
-    val lng: Double,
-    val horariosHabiles: List<Int>,
-    val horariosSabados: List<Int>,
-    val horariosDomingos: List<Int>
-) {
-    /** Id único de la parada; el prefijo "gps_" la distingue de las paradas del CSV o de Google. */
-    val id: String get() = "gps_${linea}_${puntoId}_$sentido"
-}
-
-data class ProximaLlegada(
-    val hora: String,          // "14:32"
-    val minutos: Int,          // minutos desde ahora
-    val esManana: Boolean,     // true si ya no quedan horarios hoy
-    val siguiente: String?     // la hora que sigue a esa, si existe
+/** Una línea que pasa por una parada, con el sentido en que lo hace ("ida" o "vuelta"). */
+data class LineaDeParada(
+    val linea: String,      // "500", "516", "513 EX", etc.
+    val sentido: String
 )
 
+/** Una parada de gpsbahia.com.ar (web2/get_paradas). Puede servir a varias líneas. */
+data class ParadaGps(
+    val id: String,         // "gps_<Id>"; el prefijo distingue estas paradas de las del CSV o de Google
+    val nombre: String,     // por ejemplo "J.B. JUSTO 2099"
+    val lat: Double,
+    val lng: Double,
+    val sentido: String,
+    val lineas: List<LineaDeParada>
+) {
+    val nombresDeLineas: List<String> get() = lineas.map { it.linea }.distinct().sorted()
+}
+
 data class ParadaCercana(
-    val parada: ParadaLinea,
+    val parada: ParadaGps,
     val metros: Double,
-    val rumboDesdeMi: Float,   // dirección en que queda la parada respecto de mi posición (0 = norte)
-    val proxima: ProximaLlegada?
+    val rumboDesdeMi: Float,   // hacia dónde queda la parada respecto de mi posición (0 = norte)
+    val sentido: String        // sentido de la línea consultada (o el de la parada si no se filtró)
 )
 
 class ParadasRepository(
     private val service: GPSBahiaService = RetrofitClient.gpsBahiaService
 ) {
-    private val cache = mutableMapOf<String, Pair<Long, List<ParadaLinea>>>()
+    private var cache: Pair<Long, List<ParadaGps>>? = null
 
-    /** Paradas y horarios de la línea. Se guardan 10 minutos para no pedirlos a cada pregunta. */
-    suspend fun getParadas(linea: String): List<ParadaLinea> {
-        val id = LINEA_ID[linea] ?: return emptyList()
-        cache[linea]?.let { (hora, lista) ->
+    /** Todas las paradas de todas las líneas. Se guardan 6 horas: casi nunca cambian. */
+    suspend fun getTodas(): List<ParadaGps> {
+        cache?.let { (hora, lista) ->
             if (System.currentTimeMillis() - hora < CACHE_MS && lista.isNotEmpty()) return lista
         }
 
-        var paradas = pedir(linea, id)
+        var paradas = pedir()
         if (paradas.isEmpty()) {
             // Puede que el servidor aún no nos haya "activado": abrir la página y reintentar una vez
             try {
                 service.abrirPagina("https://www.gpsbahia.com.ar/").close()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e("PARADAS", "No se pudo abrir gpsbahia.com.ar", e)
             }
-            paradas = pedir(linea, id)
+            paradas = pedir()
         }
-        if (paradas.isNotEmpty()) cache[linea] = System.currentTimeMillis() to paradas
-        Log.d("PARADAS", "Línea $linea: ${paradas.size} paradas")
+        if (paradas.isNotEmpty()) cache = System.currentTimeMillis() to paradas
+        Log.d("PARADAS", "Paradas cargadas: ${paradas.size}")
         return paradas
     }
 
-    private suspend fun pedir(linea: String, id: Int): List<ParadaLinea> =
+    private suspend fun pedir(): List<ParadaGps> =
         try {
             val crudo = withContext(Dispatchers.IO) {
-                service.getFrecuencias(id).use { it.string() }
+                service.getParadas().use { it.string() }
             }
-            parsear(linea, crudo)
+            parsear(crudo)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e("PARADAS", "Error pidiendo get_frecuencias_puntos/$id", e)
+            Log.e("PARADAS", "Error pidiendo web2/get_paradas", e)
             emptyList()
         }
 
     /**
-     * Lee la respuesta con org.json en lugar de Moshi: así no importa si un campo viene como
-     * texto, número o null. Los valores faltantes simplemente se saltean.
+     * Lee la respuesta con org.json (tolera cualquier tipo de campo). Cada parada trae
+     * "latLng" y "lineas" como texto que contiene otro JSON, así que se leen en un segundo paso.
      */
-    private fun parsear(linea: String, crudo: String): List<ParadaLinea> {
-        // Por si el servidor mete texto antes o después del JSON
+    private fun parsear(crudo: String): List<ParadaGps> {
         val ini = crudo.indexOf('{')
         val fin = crudo.lastIndexOf('}')
         if (ini < 0 || fin <= ini) {
@@ -95,112 +88,98 @@ class ParadasRepository(
             return emptyList()
         }
 
-        val raiz = JSONObject(crudo.substring(ini, fin + 1))
-        val arreglo = raiz.optJSONArray("frecuencias")
+        val arreglo = JSONObject(crudo.substring(ini, fin + 1)).optJSONArray("paradas")
         if (arreglo == null) {
-            Log.e("PARADAS", "La respuesta no trae 'frecuencias'. Empieza con: ${crudo.take(200)}")
+            Log.e("PARADAS", "La respuesta no trae 'paradas'. Empieza con: ${crudo.take(200)}")
             return emptyList()
         }
 
-        val paradas = mutableListOf<ParadaLinea>()
+        val paradas = mutableListOf<ParadaGps>()
         for (i in 0 until arreglo.length()) {
-            val f = arreglo.optJSONObject(i) ?: continue
-            val punto = f.optJSONObject("punto") ?: continue
-            val lat = punto.optString("lat").toDoubleOrNull() ?: continue
-            val lng = punto.optString("lng").toDoubleOrNull() ?: continue
-            val puntoId = punto.optString("Id").ifEmpty { f.optString("punto_id") }
-            if (puntoId.isEmpty()) continue
+            val p = arreglo.optJSONObject(i) ?: continue
+            if (!p.isNull("deleted_at") && p.optString("deleted_at").isNotEmpty()) continue   // dada de baja
 
-            paradas += ParadaLinea(
-                linea = linea,
-                puntoId = puntoId,
-                nombre = punto.optString("nombre").ifEmpty { "Parada" },
-                sentido = punto.optString("direccion").uppercase(),
+            val id = p.optString("Id").ifEmpty { p.optString("id_parada") }
+            if (id.isEmpty()) continue
+            val (lat, lng) = coordenadas(p.opt("latLng")) ?: continue
+            val lineas = lineasDe(p.opt("lineas"))
+            if (lineas.isEmpty()) continue                              // paradas sin ninguna línea
+
+            paradas += ParadaGps(
+                id = "gps_$id",
+                nombre = p.optString("nombre").trim().ifEmpty { "Parada" },
                 lat = lat,
                 lng = lng,
-                horariosHabiles = parseHorarios(f.optString("horarios")),
-                horariosSabados = parseHorarios(f.optString("horarios_sabados")),
-                horariosDomingos = parseHorarios(f.optString("horarios_domingos"))
+                sentido = p.optString("sentido").lowercase(),
+                lineas = lineas
             )
         }
         return paradas
     }
 
-    /** Las paradas de la línea ordenadas de más cerca a más lejos de (lat, lng). */
-    suspend fun paradasCercanas(linea: String, lat: Double, lng: Double, max: Int = 6): List<ParadaCercana> {
+    /** "latLng" viene como texto: {"lat":-38.77,"lng":-62.24}. También acepta un objeto directo. */
+    private fun coordenadas(valor: Any?): Pair<Double, Double>? {
+        val json = when (valor) {
+            is JSONObject -> valor
+            is String -> try { JSONObject(valor) } catch (e: Exception) { null }
+            else -> null
+        } ?: return null
+        val lat = json.optDouble("lat", Double.NaN)
+        val lng = json.optDouble("lng", Double.NaN)
+        return if (lat.isNaN() || lng.isNaN()) null else lat to lng
+    }
+
+    /** "lineas" viene como texto: [{"linea_id":"4","sentido":"ida","nombre":"500"}]. */
+    private fun lineasDe(valor: Any?): List<LineaDeParada> {
+        val arreglo = when (valor) {
+            is JSONArray -> valor
+            is String -> try { JSONArray(valor) } catch (e: Exception) { null }
+            else -> null
+        } ?: return emptyList()
+
+        val lineas = mutableListOf<LineaDeParada>()
+        for (i in 0 until arreglo.length()) {
+            val o = arreglo.optJSONObject(i) ?: continue
+            val nombre = o.optString("nombre").trim()
+            if (nombre.isNotEmpty()) lineas += LineaDeParada(nombre, o.optString("sentido").lowercase())
+        }
+        return lineas
+    }
+
+    /**
+     * Las paradas más cercanas a (lat, lng), de la más próxima a la más lejana.
+     * Si se indica [linea] ("516"), solo las de esa línea (también cuenta "513 EX" para "513").
+     */
+    suspend fun cercanas(lat: Double, lng: Double, max: Int = 20, linea: String? = null): List<ParadaCercana> {
         val res = FloatArray(2)
-        val ahora = Calendar.getInstance(ZONA)
-        return getParadas(linea)
-            .map { p ->
+        return getTodas()
+            .mapNotNull { p ->
+                val sentido = if (linea != null) {
+                    val l = p.lineas.firstOrNull { coincide(it.linea, linea) } ?: return@mapNotNull null
+                    l.sentido.ifEmpty { p.sentido }
+                } else {
+                    p.sentido
+                }
                 Location.distanceBetween(lat, lng, p.lat, p.lng, res)
-                ParadaCercana(p, res[0].toDouble(), (res[1] + 360f) % 360f, proximaLlegada(p, ahora))
+                ParadaCercana(p, res[0].toDouble(), (res[1] + 360f) % 360f, sentido)
             }
             .sortedBy { it.metros }
             .take(max)
     }
 
-    /**
-     * Próximo horario de la parada según la hora de Argentina y el día (hábil, sábado o domingo).
-     * OJO: son los horarios programados de la tabla, no la posición real del colectivo,
-     * y no se distinguen feriados.
-     */
-    fun proximaLlegada(p: ParadaLinea, ahora: Calendar = Calendar.getInstance(ZONA)): ProximaLlegada? {
-        val minAhora = ahora.get(Calendar.HOUR_OF_DAY) * 60 + ahora.get(Calendar.MINUTE)
-        val dia = ahora.get(Calendar.DAY_OF_WEEK)
-
-        val restantes = listaDelDia(p, dia).filter { it >= minAhora }
-        if (restantes.isNotEmpty()) {
-            val t = restantes.first()
-            return ProximaLlegada(formato(t), t - minAhora, false, restantes.getOrNull(1)?.let { formato(it) })
-        }
-
-        val manana = listaDelDia(p, dia % 7 + 1)
-        val t = manana.firstOrNull() ?: return null
-        return ProximaLlegada(formato(t), 1440 - minAhora + t, true, manana.getOrNull(1)?.let { formato(it) })
-    }
-
-    private fun listaDelDia(p: ParadaLinea, diaSemana: Int): List<Int> = when (diaSemana) {
-        Calendar.SATURDAY -> p.horariosSabados
-        Calendar.SUNDAY -> p.horariosDomingos
-        else -> p.horariosHabiles
-    }
-
-    private fun formato(minutos: Int): String =
-        String.format(Locale.US, "%d:%02d", (minutos / 60) % 24, minutos % 60)
-
-    // Acepta "6:24, 6:54" o "06:24;06:54": busca todas las horas H:MM del texto.
-    private fun parseHorarios(texto: String?): List<Int> =
-        Regex("(\\d{1,2}):(\\d{2})").findAll(texto ?: "")
-            .mapNotNull { m ->
-                val h = m.groupValues[1].toIntOrNull()
-                val mi = m.groupValues[2].toIntOrNull()
-                if (h != null && mi != null && mi < 60) h * 60 + mi else null
-            }
-            .toList().sorted().distinct()
+    private fun coincide(nombreLinea: String, buscada: String): Boolean =
+        nombreLinea == buscada || nombreLinea.startsWith("$buscada ")
 
     companion object {
-        /**
-         * Líneas con paradas y horarios habilitadas por ahora (solo la 516 para probar).
-         * Para sumar más: "500" to 4, "512" to 11, etc. El número es el de get_frecuencias_puntos/N.
-         */
-        val LINEA_ID: Map<String, Int> = mapOf("516" to 15)
-
-        private const val CACHE_MS = 10 * 60 * 1000L
-        private val ZONA: TimeZone = TimeZone.getTimeZone("America/Argentina/Buenos_Aires")
+        private const val CACHE_MS = 6 * 60 * 60 * 1000L
     }
 }
 
 /** Convierte una parada de gpsbahia al tipo que ya muestra la pantalla de Transporte. */
-fun ParadaCercana.toSapemStop(): SapemStop {
-    val horario = proxima?.let {
-        if (it.esManana) " · próximo mañana ${it.hora}"
-        else " · próximo ${it.hora} (en ${it.minutos} min)"
-    } ?: ""
-    return SapemStop(
-        id = parada.id,
-        nombre = "${parada.nombre} (${parada.sentido.lowercase()})",
-        lat = parada.lat,
-        lng = parada.lng,
-        lineas = listOf("${parada.linea}$horario")
-    )
-}
+fun ParadaCercana.toSapemStop(): SapemStop = SapemStop(
+    id = parada.id,
+    nombre = if (sentido.isNotEmpty()) "${parada.nombre} ($sentido)" else parada.nombre,
+    lat = parada.lat,
+    lng = parada.lng,
+    lineas = parada.nombresDeLineas
+)
