@@ -51,7 +51,8 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
             // PRUEBA GPS BAHIA
             try {
 
-                val buses = gpsBahiaRepository.getBuses()
+                // Solo una línea de prueba, para no pedir los 17 archivos cada vez que se abre la pantalla
+                val buses = gpsBahiaRepository.getBusesDeLinea("500")
 
                 Log.d(
                     "GPS_BAHIA",
@@ -382,21 +383,21 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
 
     /** "¿Dónde está la 500?": dice por voz dónde hay colectivos de esa línea, de forma aproximada. */
     private suspend fun anunciarUbicacionLinea(linea: String) {
-        val rutas = busRouteRepository.getRutas().filter { it.linea == linea }
-        if (rutas.isEmpty()) {
-            speak("No tengo el recorrido de la línea $linea.")
+        if (linea !in GpsBahiaRepository.TRACK_ID_POR_LINEA) {
+            speak("No tengo datos en vivo de la línea $linea.")
             return
         }
 
+        // Solo se consulta el archivo de esa línea (500 -> 4.json, 516 -> 15.json, etc.)
         val buses = try {
-            gpsBahiaRepository.getBuses()
+            gpsBahiaRepository.getBusesDeLinea(linea)
         } catch (e: Exception) {
             Log.e("GPS_BAHIA", "No se pudo consultar GPS Bahía", e)
             speak("No pude consultar la ubicación de los colectivos ahora.")
             return
         }
 
-        val enLinea = GpsBahiaRepository.busesEnLinea(buses, rutas)
+        val enLinea = GpsBahiaRepository.activos(buses)
         if (enLinea.isEmpty()) {
             speak("No encontré colectivos de la línea $linea circulando en este momento.")
             return
@@ -412,26 +413,37 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
         if (location == null) {
             val lugar = nombreDeLugar(enLinea.first().lat, enLinea.first().lng)
             speak(
-                "Encontré $cantidad que parecen ser de la línea $linea." +
+                "Encontré $cantidad de la línea $linea." +
                     (lugar?.let { " Uno está cerca de $it." } ?: "")
             )
             return
         }
 
-        // El más cercano a mí, con su calle aproximada y hacia dónde queda
-        val res = FloatArray(2)
-        val masCercano = enLinea.minByOrNull {
-            Location.distanceBetween(location.latitude, location.longitude, it.lat, it.lng, res)
-            res[0]
-        }!!
-        Location.distanceBetween(location.latitude, location.longitude, masCercano.lat, masCercano.lng, res)
+        // El más cercano a mí, con su calle aproximada, hacia dónde queda y si se acerca
+        val masCercano = GpsBahiaRepository
+            .calcularCercania(enLinea, location.latitude, location.longitude)
+            .firstOrNull()
+        if (masCercano == null) {
+            speak("No encontré colectivos de la línea $linea circulando en este momento.")
+            return
+        }
 
-        val lugar = nombreDeLugar(masCercano.lat, masCercano.lng)
-        val referencia = "a ${textoDistancia(res[0].toDouble())} hacia el ${puntoCardinal(res[1])} de donde estás"
+        val res = FloatArray(2)
+        Location.distanceBetween(
+            location.latitude, location.longitude,
+            masCercano.bus.lat, masCercano.bus.lng, res
+        )
+        val lugar = nombreDeLugar(masCercano.bus.lat, masCercano.bus.lng)
+        val referencia = "a ${textoDistancia(masCercano.metros)} hacia el ${puntoCardinal(res[1])} de donde estás"
+        val movimiento = when (masCercano.seAcerca) {
+            true -> ", y se está acercando, llegaría en unos ${masCercano.minutos} minutos"
+            false -> ", pero parece que se está alejando"
+            null -> ""
+        }
         speak(
-            "Encontré $cantidad que parecen ser de la línea $linea. " +
+            "Encontré $cantidad de la línea $linea. " +
                 "El más cercano está " +
-                (lugar?.let { "cerca de $it, " } ?: "") + referencia + "."
+                (lugar?.let { "cerca de $it, " } ?: "") + referencia + movimiento + "."
         )
     }
 
@@ -473,7 +485,8 @@ class TransportViewModel(application: Application) : AndroidViewModel(applicatio
                 String.format(Locale("es", "AR"), "%.1f kilómetros", c.metros / 1000)
             }
             val tiempo = if (c.minutos <= 1) "menos de un minuto" else "unos ${c.minutos} minutos"
-            "El colectivo ${c.bus.nombre} está a $distancia, llega en aproximadamente $tiempo"
+            val deLinea = c.bus.linea?.let { " de la línea $it" } ?: ""
+            "El colectivo ${c.bus.nombre}$deLinea está a $distancia, llega en aproximadamente $tiempo"
         }
         speak(texto)
     }
