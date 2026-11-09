@@ -211,7 +211,7 @@ class ExploreViewModel(application: Application) : AndroidViewModel(application)
         val s = r.status
         if (s != null && s != "OK" && s != "ZERO_RESULTS") {
             Log.e("Explore", "Google Places: $s - ${r.errorMessage}")
-            speak("No pude buscar con Google Maps. Revisá la clave de la API.")
+            speak("No pude buscar con Google Maps. Revisá la clave y que Places API (New) esté habilitada.")
             return true
         }
         return false
