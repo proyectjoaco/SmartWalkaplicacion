@@ -53,7 +53,7 @@ class GpsBahiaRepository(
         val html = service.abrirPagina("https://www.gpsbahia.com.ar/").use { it.string() }
         val nuevo = TOKEN_EN_PAGINA.find(html)?.groupValues?.get(1)
         if (nuevo != null) {
-            if (nuevo != token) Log.d("GPS_BAHIA", "Token actualizado desde la página: $nuevo")
+            Log.d("GPS_BAHIA", "Token de la página: $nuevo" + if (nuevo != token) " (distinto del anterior, actualizado)" else " (igual al anterior)")
             token = nuevo
         } else {
             Log.w("GPS_BAHIA", "No encontré el token en la página; uso el de local.properties")
