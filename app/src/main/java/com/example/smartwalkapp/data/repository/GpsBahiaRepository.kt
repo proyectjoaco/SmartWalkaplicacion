@@ -51,6 +51,7 @@ class GpsBahiaRepository(
      */
     private suspend fun activarSesion() {
         val html = service.abrirPagina("https://www.gpsbahia.com.ar/").use { it.string() }
+        Log.d("GPS_BAHIA", "Página principal: ${html.length} caracteres, contiene vgggaxqq: ${html.contains("vgggaxqq")}")
         val nuevo = TOKEN_EN_PAGINA.find(html)?.groupValues?.get(1)
         if (nuevo != null) {
             Log.d("GPS_BAHIA", "Token de la página: $nuevo" + if (nuevo != token) " (distinto del anterior, actualizado)" else " (igual al anterior)")
@@ -66,7 +67,9 @@ class GpsBahiaRepository(
     private suspend fun pedirLinea(linea: String): List<BusPosition> {
         val id = TRACK_ID_POR_LINEA[linea] ?: return emptyList()
         return try {
-            service.getBusLocations(id, token).data.mapNotNull { it.toPosition(linea) }
+            val r = service.getBusLocations(id, token)
+            Log.d("GPS_BAHIA", "track_data/$id (línea $linea): status=${r.status} token=${r.token} colectivos=${r.data.size} usando token ${token.take(6)}…")
+            r.data.mapNotNull { it.toPosition(linea) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

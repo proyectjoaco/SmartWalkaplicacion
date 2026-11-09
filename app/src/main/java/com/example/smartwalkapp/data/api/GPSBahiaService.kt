@@ -11,6 +11,7 @@ import retrofit2.http.Url
 // (por ejemplo cuando responde {"status":"ok","token":"ok","data":[]}).
 data class GPSBahiaResponse(
     val status: String? = null,
+    val token: String? = null,      // el servidor responde "ok" si aceptó el token
     val data: List<BusLocation> = emptyList()
 )
 
