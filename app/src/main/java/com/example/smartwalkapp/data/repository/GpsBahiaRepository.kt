@@ -37,12 +37,28 @@ data class BusCercano(
 
 class GpsBahiaRepository(
     private val service: GPSBahiaService = RetrofitClient.gpsBahiaService,
-    private val token: String = BuildConfig.GPS_BAHIA_TOKEN
+    private val tokenRespaldo: String = BuildConfig.GPS_BAHIA_TOKEN
 ) {
     private var sesionActiva = false
 
+    // Token vigente: se lee de la página principal cada vez que se abre la sesión.
+    // Si no se lo encuentra ahí, se usa el de local.properties.
+    private var token: String = tokenRespaldo
+
+    /**
+     * Abre la página principal (para que el servidor nos active) y de paso lee el token,
+     * que la web deja escrito en el HTML: <script>var vgggaxqq = '8ba0...'</script>
+     */
     private suspend fun activarSesion() {
-        service.abrirPagina("https://www.gpsbahia.com.ar/").close()
+        val html = service.abrirPagina("https://www.gpsbahia.com.ar/").use { it.string() }
+        val nuevo = TOKEN_EN_PAGINA.find(html)?.groupValues?.get(1)
+        if (nuevo != null) {
+            if (nuevo != token) Log.d("GPS_BAHIA", "Token actualizado desde la página: $nuevo")
+            token = nuevo
+        } else {
+            Log.w("GPS_BAHIA", "No encontré el token en la página; uso el de local.properties")
+            token = tokenRespaldo
+        }
         sesionActiva = true
     }
 
@@ -111,6 +127,9 @@ class GpsBahiaRepository(
     }
 
     companion object {
+        // var vgggaxqq = '8ba04cdfbc11cc1caac50024b2bf9b9e'  (tolera comillas dobles, espacios y g de más o de menos)
+        private val TOKEN_EN_PAGINA = Regex("""var\s+vg+axqq\s*=\s*['"]([A-Za-z0-9]+)['"]""")
+
         private const val VELOCIDAD_PROMEDIO_KMH = 18.0
         private const val MAX_SEGUNDOS_SIN_SENAL = 180L
 
